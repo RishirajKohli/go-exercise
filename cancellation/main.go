@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -10,8 +11,8 @@ import (
 
 func main() {
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
 	ch := make(chan string)
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -23,18 +24,17 @@ func main() {
 				"http://httpbin.org/status/200,200,200,500")
 			if err != nil {
 				fmt.Println("error in status goroutine:", err)
-				cancel()
+				cancel(fmt.Errorf("in random goroutine %w", err))
 				return
 			}
 			if resp.StatusCode == http.StatusInternalServerError {
 				fmt.Println("bad status, exiting")
-				cancel()
+				cancel(errors.New("Bad status"))
 				return
 			}
 			select {
 			case ch <- "success from status":
 			case <-ctx.Done():
-				return
 			}
 			time.Sleep(1 * time.Second)
 		}
@@ -46,14 +46,12 @@ func main() {
 			resp, err := makeRequest(ctx, "http://httpbin.org/delay/1")
 			if err != nil {
 				fmt.Println("error in delay goroutine:", err)
-				cancel()
+				cancel(fmt.Errorf("In delay goroutine %w", err))
 				return
 			}
 			select {
 			case ch <- "success from delay: " + resp.Header.Get("date"):
 			case <-ctx.Done():
-				fmt.Println("Need to cancel")
-				return
 			}
 		}
 	}()
@@ -64,7 +62,7 @@ loop:
 		case s := <-ch:
 			fmt.Println("in main:", s)
 		case <-ctx.Done():
-			fmt.Println("in main: cancelled!")
+			fmt.Println("in main: cancelled!", context.Cause(ctx))
 			break loop
 		}
 	}
